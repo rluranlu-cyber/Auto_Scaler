@@ -1,4 +1,4 @@
-# Auto_Scaler v1.4.0
+# Auto_Scaler v1.4.1
 #
 # Blender 5.0.1 兼容插件
 #
@@ -34,7 +34,7 @@
 bl_info = {
     "name": "Auto_Scaler",
     "author": "WorkBuddy",
-    "version": (1, 4, 0),
+    "version": (1, 4, 1),
     "blender": (5, 0, 1),
     "location": "View3D > Sidebar (N) > Tool > Auto Scaler",
     "description": "Two buttons with auto i18n (zh_CN/en_US): (A) Clear parents & delete Empties; (B) Create Cube-empty at bottom-center, parent roots with Keep Transform, multiply location/scale by 0.0254 (inches to meters).",
@@ -291,26 +291,30 @@ class OBJECT_OT_clear_hierarchy(Operator):
         empties_to_delete = [obj for obj in selected if obj.type == 'EMPTY'
                              and obj.name in bpy.data.objects]
 
+        # 在删除前收集剩余物体（非 Empty）
+        # —— 关键：bpy.data.objects.remove() 删除后，Python 引用变"僵尸"，
+        #    再访问 obj.name / obj.type 会抛 ReferenceError: StructRNA has been removed
+        #    因为只删 Empty，非 Empty 物体在删除后必然仍存在，所以提前收集即可
+        remaining = [obj for obj in selected if obj.type != 'EMPTY']
+
         # 设置一个不会被删除的物体为 active（避免删除 active 物体报错）
         for obj in context.selected_objects:
             obj.select_set(False)
-        safe_active = None
-        for obj in selected:
-            if obj.type != 'EMPTY' and obj.name in bpy.data.objects:
-                safe_active = obj
-                break
+        safe_active = remaining[0] if remaining else None
         context.view_layer.objects.active = safe_active
 
         deleted_count = 0
         for empty in empties_to_delete:
-            if empty.name not in bpy.data.objects:
+            try:
+                if empty.name not in bpy.data.objects:
+                    continue
+            except ReferenceError:
+                # 僵尸引用防御：该 Empty 已被意外移除
                 continue
             bpy.data.objects.remove(empty, do_unlink=True)
             deleted_count += 1
 
-        # 恢复剩余选中物体的选中状态（非 Empty 且仍存在的）
-        remaining = [obj for obj in selected
-                     if obj.name in bpy.data.objects and obj.type != 'EMPTY']
+        # 恢复剩余选中物体的选中状态（remaining 在删除前已收集，引用仍有效）
         for obj in remaining:
             obj.select_set(True)
         if remaining:
